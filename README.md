@@ -28,7 +28,7 @@ flowchart LR
   U[Client] -->|POST /ask| APIGW[API Gateway HTTP API]
   APIGW --> L[Lambda arm64 · FastAPI + Mangum]
   L -->|key at cold start| SSM[(SSM SecureString)]
-  L -->|messages + tools| C[Claude API]
+  L -->|messages + tools| C[LLM API: Gemini / GLM / DeepSeek / Groq / Claude]
   C -->|tool_use| L
   L --> T[analysis.py · pure functions]
   T --> D[(Dataset: demo or uploaded CSV)]
@@ -40,11 +40,11 @@ flowchart LR
 
 ```bash
 pip install -e ".[dev]"
-python scripts/offline_demo.py     # http://127.0.0.1:8000 (web UI + API, Claude replaced by a scripted stand-in)
+python scripts/offline_demo.py     # http://127.0.0.1:8000 (web UI + API, the LLM replaced by a scripted stand-in)
 ```
 The real tools, API guards, CSV upload and UI all run; only the language model is simulated.
 
-## Run it locally (real Claude)
+## Run it locally (real LLM)
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
@@ -62,7 +62,7 @@ python evals/run_evals.py --max 3          # cheap smoke eval (spends cents)
 ### Using your own data
 **Personal finance:** a bank-statement CSV with `Date`, `Description`, `Amount` (negative = expense).
 Brazilian format (`dd/mm/yyyy`, `1.234,56`, `;` separator) works. The raw statement never reaches the model:
-Claude only sees compact tool results.
+The model only sees compact tool results.
 
 **AWS:** Export from **AWS Cost Explorer → Download CSV** (daily, grouped by Service), or any CSV with
 columns `Date, Service, Cost`. Wide format (a `Service` column followed by ISO-date columns) also works.
