@@ -16,8 +16,8 @@ variable "anthropic_api_key" {
 
 variable "model" {
   type        = string
-  default     = "claude-opus-5-5"
-  description = "Any Claude model id; claude-haiku-4-5 is the cheapest for a public demo."
+  default     = "claude-haiku-4-5"
+  description = "Any Claude model id; Haiku 4.5 is the cheapest, ideal for a public demo."
 }
 
 variable "daily_budget_usd" {

@@ -17,7 +17,7 @@ import anthropic
 from . import analysis, finance
 from .data import demo_dataset, load_costs_csv
 
-DEFAULT_MODEL = "claude-opus-5-5"
+DEFAULT_MODEL = "claude-haiku-4-5"  # cheapest current Claude; override with FINOPS_MODEL
 
 # (input $/MTok, output $/MTok, cache-read $/MTok). Update with the pricing page.
 PRICING = {
@@ -172,8 +172,13 @@ def run_tool(
         return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
 
+def supports_effort(model: str) -> bool:
+    """Haiku 4.5 rejects output_config.effort; the Sonnet/Opus 5.x models accept it."""
+    return not model.startswith("claude-haiku")
+
+
 def estimate_cost_usd(model: str, usage: Any) -> float:
-    inp, out, cache_read = PRICING.get(model, PRICING[DEFAULT_MODEL])
+    inp, out, cache_read = PRICING.get(model, PRICING["claude-opus-5-5"])
     cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
     cached = getattr(usage, "cache_read_input_tokens", 0) or 0
     return (
@@ -220,13 +225,16 @@ def ask(
     result = AgentResult(answer="", steps=0)
 
     for step in range(1, cfg.max_steps + 1):
+        extra: dict[str, Any] = {}
+        if supports_effort(cfg.model):
+            extra["output_config"] = {"effort": cfg.effort}
         response = client.messages.create(
             model=cfg.model,
             max_tokens=cfg.max_tokens,
             system=domain.system_prompt,
             tools=domain.tools,
             messages=messages,
-            output_config={"effort": cfg.effort},
+            **extra,
         )
         result.steps = step
         result.input_tokens += response.usage.input_tokens or 0

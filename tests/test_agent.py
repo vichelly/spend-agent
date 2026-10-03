@@ -82,9 +82,16 @@ def test_parallel_tool_calls_return_all_results_in_one_message():
     assert [r["tool_use_id"] for r in results] == ["a", "b"]
 
 
+def test_haiku_default_request_has_no_effort():
+    client = FakeClient([resp([text("hi")], "end_turn")])
+    ask("q", AgentConfig(), client=client)
+    assert AgentConfig().model == "claude-haiku-4-5"
+    assert "output_config" not in client.requests[0]
+
+
 def test_requests_use_effort_and_never_forced_tool_choice():
     client = FakeClient([resp([text("hi")], "end_turn")])
-    ask("q", AgentConfig(effort="low"), client=client)
+    ask("q", AgentConfig(model="claude-opus-5-5", effort="low"), client=client)
     req = client.requests[0]
     assert req["output_config"] == {"effort": "low"}
     assert "tool_choice" not in req and "temperature" not in req and "thinking" not in req

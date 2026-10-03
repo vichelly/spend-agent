@@ -84,7 +84,8 @@ The only real cost is the Claude API, bounded by `daily_budget_usd` (default $3)
 per-request cap. Use `-var model=claude-haiku-4-5` to make the demo very cheap.
 
 ## Model and cost notes
-- Default model `claude-opus-5-5`, effort `medium`. Override with `FINOPS_MODEL` / `FINOPS_EFFORT`.
+- Default model `claude-haiku-4-5` (cheapest Claude, about a cent per question). Override with `FINOPS_MODEL`
+  (e.g. `claude-opus-5-5`) and `FINOPS_EFFORT` (sent only to models that support it).
 - Typical question: 2 to 3 steps, a few thousand tokens. The exact cost is in every API response.
 - Pricing table lives in `agent.py` (`PRICING`); update it with the provider's pricing page.
 
