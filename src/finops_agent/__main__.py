@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .agent import DOMAINS, AgentConfig, ask
+from .env import load_dotenv
 
 
 def main() -> int:
@@ -13,6 +14,7 @@ def main() -> int:
     ap.add_argument("--mode", choices=sorted(DOMAINS), default="finops")
     ap.add_argument("--csv", type=Path, help="your own CSV (default: demo data)")
     ap.add_argument("--verbose", "-v", action="store_true")
+    load_dotenv()
     args = ap.parse_args()
 
     domain = DOMAINS[args.mode]

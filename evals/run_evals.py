@@ -11,11 +11,16 @@ Exit code is non-zero if the pass rate is below --threshold, so CI can gate on i
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from finops_agent.env import load_dotenv
+
+load_dotenv()
 
 from finops_agent import analysis, finance
 from finops_agent.agent import FINANCE, FINOPS, AgentConfig, ask
@@ -130,6 +135,9 @@ def main() -> int:
     ap.add_argument("--max", type=int, default=0)
     ap.add_argument("--threshold", type=float, default=0.85)
     args = ap.parse_args()
+    if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
+        print("No API key found. Put ANTHROPIC_API_KEY=... in a .env file (see .env.example).")
+        return 2
 
     cases = build_cases()[: args.max or None]
     passed, total_cost = 0, 0.0
