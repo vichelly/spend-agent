@@ -12,6 +12,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+openai = ["openai>=1.40"]  # for Gemini / Z.ai / DeepSeek / Groq (OpenAI-compatible)
 dev = ["pytest>=8", "ruff>=0.5", "uvicorn>=0.29", "boto3>=1.34"]
 
 [build-system]

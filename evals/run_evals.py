@@ -11,8 +11,8 @@ Exit code is non-zero if the pass rate is below --threshold, so CI can gate on i
 from __future__ import annotations
 
 import argparse
-import os
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +25,7 @@ load_dotenv()
 from finops_agent import analysis, finance
 from finops_agent.agent import FINANCE, FINOPS, AgentConfig, ask
 from finops_agent.data import demo_dataset
+from finops_agent.llm import make_provider
 
 DS = demo_dataset()
 LD = finance.demo_ledger()
@@ -134,16 +135,23 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--max", type=int, default=0)
     ap.add_argument("--threshold", type=float, default=0.85)
+    ap.add_argument(
+        "--sleep", type=float, default=2.0, help="seconds between cases (free-tier rate limits)"
+    )
     args = ap.parse_args()
-    if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
-        print("No API key found. Put ANTHROPIC_API_KEY=... in a .env file (see .env.example).")
+    try:
+        provider = make_provider()
+    except RuntimeError as exc:
+        print(f"{exc}\nSee .env.example (free options: gemini, zai, groq).")
         return 2
+    print(f"provider={provider.name} model={provider.model}\n")
 
     cases = build_cases()[: args.max or None]
     passed, total_cost = 0, 0.0
     for c in cases:
         dom = FINANCE if c.domain == "finance" else FINOPS
-        r = ask(c.question, AgentConfig(), domain=dom)
+        r = ask(c.question, AgentConfig(), domain=dom, provider=provider)
+        time.sleep(args.sleep)
         used = {t["name"] for t in r.tool_calls}
         tools_ok = bool(used & c.expect_tools)
         answer_ok = any(s.lower() in r.answer.lower() for s in c.expect_any)

@@ -1,9 +1,17 @@
-data "aws_caller_identity" "current" {}
+locals {
+  key_env = {
+    anthropic = "ANTHROPIC_API_KEY"
+    gemini    = "GEMINI_API_KEY"
+    zai       = "ZAI_API_KEY"
+    deepseek  = "DEEPSEEK_API_KEY"
+    groq      = "GROQ_API_KEY"
+  }
+}
 
-resource "aws_ssm_parameter" "anthropic_key" {
-  name  = "/${var.name}/anthropic_api_key"
+resource "aws_ssm_parameter" "llm_key" {
+  name  = "/${var.name}/llm_api_key"
   type  = "SecureString"
-  value = var.anthropic_api_key
+  value = var.llm_api_key
 }
 
 resource "aws_cloudwatch_log_group" "lambda" {
@@ -36,7 +44,7 @@ resource "aws_iam_role_policy" "lambda" {
       {
         Effect   = "Allow"
         Action   = ["ssm:GetParameter"]
-        Resource = aws_ssm_parameter.anthropic_key.arn
+        Resource = aws_ssm_parameter.llm_key.arn
       }
     ]
   })
@@ -56,7 +64,9 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      ANTHROPIC_KEY_SSM_PARAM = aws_ssm_parameter.anthropic_key.name
+      LLM_KEY_SSM_PARAM       = aws_ssm_parameter.llm_key.name
+      LLM_KEY_ENV             = local.key_env[var.llm_provider]
+      FINOPS_PROVIDER         = var.llm_provider
       FINOPS_MODEL            = var.model
       FINOPS_DAILY_BUDGET_USD = tostring(var.daily_budget_usd)
     }

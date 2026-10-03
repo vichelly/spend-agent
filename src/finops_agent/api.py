@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import time
 from collections import defaultdict, deque
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -18,11 +19,18 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from .agent import DOMAINS, AgentConfig, ask
+from .llm import make_provider
 
 app = FastAPI(title="FinOps Agent", version=__version__)
 
 RATE_LIMIT = int(os.getenv("FINOPS_RATE_LIMIT_PER_MIN", "6"))
 DAILY_BUDGET_USD = float(os.getenv("FINOPS_DAILY_BUDGET_USD", "3.00"))
+
+
+@lru_cache(maxsize=1)
+def _provider():
+    return make_provider()
+
 
 _hits: dict[str, deque[float]] = defaultdict(deque)
 _spend = {"day": time.strftime("%Y-%m-%d"), "usd": 0.0}
@@ -86,7 +94,11 @@ def ask_endpoint(body: AskRequest, request: Request) -> AskResponse:
             raise HTTPException(422, str(exc)) from exc
     else:
         dataset = domain.demo()
-    result = ask(body.question, AgentConfig(), dataset=dataset, domain=domain)
+    try:
+        provider = _provider()
+    except RuntimeError as exc:
+        raise HTTPException(503, f"LLM not configured: {exc}") from exc
+    result = ask(body.question, AgentConfig(), dataset=dataset, domain=domain, provider=provider)
     _spend["usd"] += result.cost_usd
     return AskResponse(
         answer=result.answer,

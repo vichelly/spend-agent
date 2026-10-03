@@ -12,19 +12,20 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-import anthropic
-
 from . import analysis, finance
 from .data import demo_dataset, load_costs_csv
+from .llm import (
+    AnthropicProvider,
+    Provider,
+    estimate_cost_usd,
+    make_provider,
+    supports_effort,
+)
+
+__all__ = ["estimate_cost_usd", "supports_effort"]  # re-exported for tests/back-compat
 
 DEFAULT_MODEL = "claude-haiku-4-5"  # cheapest current Claude; override with FINOPS_MODEL
 
-# (input $/MTok, output $/MTok, cache-read $/MTok). Update with the pricing page.
-PRICING = {
-    "claude-opus-5-5": (4.00, 20.00, 0.20),
-    "claude-sonnet-5-5": (2.00, 10.00, 0.20),
-    "claude-haiku-4-5": (1.00, 5.00, 0.10),
-}
 
 SYSTEM_PROMPT = """You are FinOps Agent, an assistant that helps engineers understand and \
 reduce their AWS bill.
@@ -172,23 +173,6 @@ def run_tool(
         return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
 
-def supports_effort(model: str) -> bool:
-    """Haiku 4.5 rejects output_config.effort; the Sonnet/Opus 5.x models accept it."""
-    return not model.startswith("claude-haiku")
-
-
-def estimate_cost_usd(model: str, usage: Any) -> float:
-    inp, out, cache_read = PRICING.get(model, PRICING["claude-opus-5-5"])
-    cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
-    cached = getattr(usage, "cache_read_input_tokens", 0) or 0
-    return (
-        (usage.input_tokens or 0) * inp
-        + (usage.output_tokens or 0) * out
-        + cached * cache_read
-        + cache_write * inp * 1.25
-    ) / 1_000_000
-
-
 @dataclass
 class AgentResult:
     answer: str
@@ -208,65 +192,62 @@ class AgentConfig:
     max_cost_usd: float = field(
         default_factory=lambda: float(os.getenv("FINOPS_MAX_COST_PER_REQUEST", "0.25"))
     )
+    # Free tiers cost $0 per call, so also cap tokens (protects rate limits and latency).
+    max_total_tokens: int = field(
+        default_factory=lambda: int(os.getenv("FINOPS_MAX_TOKENS_PER_REQUEST", "60000"))
+    )
     max_tokens: int = 4000
 
 
 def ask(
     question: str,
     config: AgentConfig | None = None,
-    client: anthropic.Anthropic | None = None,
+    client: Any | None = None,  # Anthropic-style client (kept for tests / backwards compat)
     dataset: Any | None = None,
     domain: Domain = FINOPS,
+    provider: Provider | None = None,
 ) -> AgentResult:
     cfg = config or AgentConfig()
     ds = dataset or domain.demo()
-    client = client or anthropic.Anthropic()
-    messages: list[dict[str, Any]] = [{"role": "user", "content": question}]
+    if provider is None:
+        if client is not None:
+            provider = AnthropicProvider(client, cfg.model, cfg.effort, cfg.max_tokens)
+        else:
+            provider = make_provider(
+                model=os.getenv("FINOPS_MODEL"), effort=cfg.effort, max_tokens=cfg.max_tokens
+            )
+    session = provider.new_session(domain.system_prompt, domain.tools, question)
     result = AgentResult(answer="", steps=0)
 
     for step in range(1, cfg.max_steps + 1):
-        extra: dict[str, Any] = {}
-        if supports_effort(cfg.model):
-            extra["output_config"] = {"effort": cfg.effort}
-        response = client.messages.create(
-            model=cfg.model,
-            max_tokens=cfg.max_tokens,
-            system=domain.system_prompt,
-            tools=domain.tools,
-            messages=messages,
-            **extra,
-        )
+        turn = session.step()
         result.steps = step
-        result.input_tokens += response.usage.input_tokens or 0
-        result.output_tokens += response.usage.output_tokens or 0
-        result.cost_usd += estimate_cost_usd(cfg.model, response.usage)
+        result.input_tokens += turn.input_tokens
+        result.output_tokens += turn.output_tokens
+        result.cost_usd += turn.cost_usd
 
-        if response.stop_reason == "refusal":
+        if turn.stop == "refusal":
             result.stopped_reason = "refusal"
             result.answer = "The request was declined by the model's safety checks."
             return result
-
-        text = "".join(b.text for b in response.content if b.type == "text")
-        if response.stop_reason != "tool_use":
-            result.answer = text
-            result.stopped_reason = response.stop_reason or "end_turn"
+        if not turn.tool_calls:
+            result.answer = turn.text
+            result.stopped_reason = turn.stop
             return result
 
-        # Echo the assistant turn back unchanged (required for thinking blocks).
-        messages.append({"role": "assistant", "content": response.content})
-        tool_results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                output = run_tool(ds, block.name, dict(block.input), domain.dispatch)
-                result.tool_calls.append({"name": block.name, "input": dict(block.input)})
-                tool_results.append(
-                    {"type": "tool_result", "tool_use_id": block.id, "content": output}
-                )
-        messages.append({"role": "user", "content": tool_results})
+        outputs = []
+        for call in turn.tool_calls:
+            outputs.append((call.id, run_tool(ds, call.name, call.input, domain.dispatch)))
+            result.tool_calls.append({"name": call.name, "input": call.input})
+        session.add_tool_results(outputs)
 
         if result.cost_usd >= cfg.max_cost_usd:
             result.stopped_reason = "cost_cap"
-            result.answer = text or "Stopped: per-request cost cap reached."
+            result.answer = turn.text or "Stopped: per-request cost cap reached."
+            return result
+        if result.input_tokens + result.output_tokens >= cfg.max_total_tokens:
+            result.stopped_reason = "token_cap"
+            result.answer = turn.text or "Stopped: per-request token cap reached."
             return result
 
     result.stopped_reason = "max_steps"

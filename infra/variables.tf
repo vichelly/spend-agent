@@ -8,16 +8,26 @@ variable "name" {
   default = "finops-agent"
 }
 
-variable "anthropic_api_key" {
+variable "llm_provider" {
+  type        = string
+  default     = "gemini"
+  description = "anthropic | gemini | zai | deepseek | groq. gemini/zai/groq have free tiers."
+  validation {
+    condition     = contains(["anthropic", "gemini", "zai", "deepseek", "groq"], var.llm_provider)
+    error_message = "llm_provider must be one of anthropic, gemini, zai, deepseek, groq."
+  }
+}
+
+variable "llm_api_key" {
   type        = string
   sensitive   = true
-  description = "Stored as an SSM SecureString; read by the Lambda at cold start."
+  description = "Provider API key. Stored as an SSM SecureString; read by the Lambda at cold start."
 }
 
 variable "model" {
   type        = string
-  default     = "claude-haiku-4-5"
-  description = "Any Claude model id; Haiku 4.5 is the cheapest, ideal for a public demo."
+  default     = ""
+  description = "Optional model id override; empty uses the provider default."
 }
 
 variable "daily_budget_usd" {

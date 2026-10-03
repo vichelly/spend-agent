@@ -2,7 +2,7 @@
 
 One agent, two everyday jobs: **(1)** read an AWS bill, explain where the money goes, spot anomalies and
 estimate savings; **(2)** read a bank statement, find forgotten subscriptions, duplicate charges and
-spending habits. Same engine, different tool sets (a `Domain`). Built on Claude with tool use. The model never does the math:
+spending habits. Same engine, different tool sets (a `Domain`). Built on LLM tool calling (Claude, Gemini, GLM, DeepSeek, Groq...). The model never does the math:
 every number comes from a deterministic, unit-tested function.
 
 > AWS: *"Why did our NAT Gateway bill jump?"* · Personal: *"Which subscriptions overlap?"*
@@ -51,7 +51,6 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 pytest -q                                  # 41 tests, no network, no API key
 
-export ANTHROPIC_API_KEY=sk-ant-...
 python -m finops_agent "What are my top 3 services this month?" -v
 python -m finops_agent --mode finance "Which subscriptions overlap?" -v
 python -m finops_agent "Where can I save money?" --csv my_cost_explorer.csv -v
@@ -76,16 +75,38 @@ detect idle resources.
 ./scripts_package.sh                       # lambda.zip with Linux/arm64 wheels
 cd infra
 terraform init
-terraform apply -var anthropic_api_key=sk-ant-... -var alert_email=you@example.com
+terraform apply -var llm_provider=gemini -var llm_api_key=... -var alert_email=you@example.com
 ```
 
 Free-tier shape: one Lambda (arm64, 512 MB), HTTP API, 7-day logs, no NAT, no database.
-The only real cost is the Claude API, bounded by `daily_budget_usd` (default $3) and the
-per-request cap. Use `-var model=claude-haiku-4-5` to make the demo very cheap.
+With a free-tier provider (`gemini`, `zai`, `groq`) the whole demo costs about $0. Paid providers are bounded by
+`daily_budget_usd` (default $3) and the per-request cap.
+
+## LLM providers (pick the cheapest that works)
+
+The agent is provider-agnostic (`llm.py`). Set `FINOPS_PROVIDER` or just put one key in `.env`; the first key found wins.
+
+| Provider | Key env var | Cost | Default model |
+|---|---|---|---|
+| `gemini` (Google AI Studio) | `GEMINI_API_KEY` | free tier, no card | `gemini-2.5-flash` |
+| `zai` (Z.ai GLM) | `ZAI_API_KEY` | free Flash model | `glm-4.7-flash` |
+| `groq` | `GROQ_API_KEY` | free tier | `llama-3.3-70b-versatile` |
+| `deepseek` | `DEEPSEEK_API_KEY` | about $0.14 to $0.28 per million tokens | `deepseek-chat` |
+| `anthropic` (Claude) | `ANTHROPIC_API_KEY` | paid | `claude-haiku-4-5` |
+| `openai-compat` | `OPENAI_API_KEY` + `FINOPS_BASE_URL` | any (Ollama, vLLM...) | `FINOPS_MODEL` |
+
+```bash
+pip install -e ".[dev,openai]"          # openai client powers every non-Claude provider
+cp .env.example .env                     # add ONE key
+python -m finops_agent -v "Did anything weird happen to our bill?"
+python evals/run_evals.py                # --sleep 4 if you hit free-tier rate limits
+```
+Model ids change over time; override with `FINOPS_MODEL`. Free tiers may log or train on prompts, so use
+the synthetic demo data (the agent already sends only compact tool results, never your raw statement).
 
 ## Model and cost notes
-- Default model `claude-haiku-4-5` (cheapest Claude, about a cent per question). Override with `FINOPS_MODEL`
-  (e.g. `claude-opus-5-5`) and `FINOPS_EFFORT` (sent only to models that support it).
+- Per-request guards: `FINOPS_MAX_COST_PER_REQUEST` (USD), `FINOPS_MAX_TOKENS_PER_REQUEST` (also protects free-tier limits).
+- With Claude, `FINOPS_EFFORT` is sent only to models that support it.
 - Typical question: 2 to 3 steps, a few thousand tokens. The exact cost is in every API response.
 - Pricing table lives in `agent.py` (`PRICING`); update it with the provider's pricing page.
 
