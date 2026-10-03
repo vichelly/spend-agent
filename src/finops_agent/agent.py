@@ -218,6 +218,7 @@ def ask(
             )
     session = provider.new_session(domain.system_prompt, domain.tools, question)
     result = AgentResult(answer="", steps=0)
+    nudges = 0
 
     for step in range(1, cfg.max_steps + 1):
         turn = session.step()
@@ -230,6 +231,10 @@ def ask(
             result.stopped_reason = "refusal"
             result.answer = "The request was declined by the model's safety checks."
             return result
+        if not turn.tool_calls and not turn.text.strip() and result.tool_calls and nudges < 1:
+            nudges += 1
+            if session.nudge("Using the tool results above, answer the original question now."):
+                continue
         if not turn.tool_calls:
             result.answer = turn.text
             result.stopped_reason = turn.stop

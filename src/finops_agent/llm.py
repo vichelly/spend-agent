@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -40,6 +42,7 @@ class Turn:
 class Session(Protocol):
     def step(self) -> Turn: ...
     def add_tool_results(self, results: list[tuple[str, str]]) -> None: ...
+    def nudge(self, text: str) -> bool: ...
 
 
 class Provider(Protocol):
@@ -129,6 +132,9 @@ class _AnthropicSession:
             stop=stop,
         )
 
+    def nudge(self, text: str) -> bool:
+        return False  # Claude does not return empty final turns; nothing to repair
+
     def add_tool_results(self, results: list[tuple[str, str]]) -> None:
         # Echo the assistant turn back unchanged (required for thinking blocks).
         self.messages.append({"role": "assistant", "content": self._last_content})
@@ -143,6 +149,30 @@ class _AnthropicSession:
 
 
 # ----------------------------------------------------------------------------- OpenAI-compatible
+
+_sleep = time.sleep  # patched in tests
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}  # rate limit + transient server errors
+MAX_RATE_LIMIT_RETRIES = int(os.getenv("FINOPS_RATE_LIMIT_RETRIES", "4"))
+
+
+def _retry_after_seconds(exc: Exception) -> float:
+    """Free tiers say how long to wait ("Please retry in 46.7s" / retryDelay: '46s')."""
+    m = re.search(r"retry in ([\d.]+)\s*s|retryDelay['\"]?:\s*['\"]?(\d+)s", str(exc))
+    wait = float(m.group(1) or m.group(2)) if m else 20.0
+    return min(wait + 2.0, 70.0)
+
+
+def _create_with_backoff(fn: Any, **kwargs: Any) -> Any:
+    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+        try:
+            return fn(**kwargs)
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status not in RETRYABLE_STATUS or attempt == MAX_RATE_LIMIT_RETRIES:
+                raise
+            if status == 429 and "PerDay" in str(exc):
+                raise  # daily quota: waiting a minute will not help
+            _sleep(_retry_after_seconds(exc) if status == 429 else 5.0 * (attempt + 1))
 
 
 class OpenAICompatProvider:
@@ -179,7 +209,8 @@ class _OpenAISession:
         self._assistant: dict[str, Any] | None = None
 
     def step(self) -> Turn:
-        r = self.p.client.chat.completions.create(
+        r = _create_with_backoff(
+            self.p.client.chat.completions.create,
             model=self.p.model,
             messages=self.messages,
             tools=self.tools,
@@ -233,6 +264,11 @@ class _OpenAISession:
             cost_usd=(tin * pin + tout * pout) / 1_000_000,
             stop=stop,
         )
+
+    def nudge(self, text: str) -> bool:
+        """Small models sometimes return an empty final message after a tool result."""
+        self.messages.append({"role": "user", "content": text})
+        return True
 
     def add_tool_results(self, results: list[tuple[str, str]]) -> None:
         assert self._assistant is not None

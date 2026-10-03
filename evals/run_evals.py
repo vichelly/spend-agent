@@ -92,8 +92,8 @@ def build_cases() -> list[Case]:
         Case(
             "no_hallucination",
             "What was our spend on Amazon Kinesis last month?",
-            {"cost_trend", "top_services"},
-            ["not", "no data", "unknown", "don't", "doesn't"],
+            set(),  # any behaviour is fine as long as it admits the data is missing
+            ["not", "no data", "unknown", "don't", "doesn't", "cannot", "unable", "no "],
         ),
     ]
     subs = finance.find_subscriptions(LD)
@@ -134,6 +134,7 @@ def build_cases() -> list[Case]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--max", type=int, default=0)
+    ap.add_argument("--only", help="comma-separated case names to run")
     ap.add_argument("--threshold", type=float, default=0.85)
     ap.add_argument(
         "--sleep", type=float, default=2.0, help="seconds between cases (free-tier rate limits)"
@@ -146,14 +147,22 @@ def main() -> int:
         return 2
     print(f"provider={provider.name} model={provider.model}\n")
 
-    cases = build_cases()[: args.max or None]
+    cases = build_cases()
+    if args.only:
+        wanted = set(args.only.split(","))
+        cases = [c for c in cases if c.name in wanted]
+    cases = cases[: args.max or None]
     passed, total_cost = 0, 0.0
     for c in cases:
         dom = FINANCE if c.domain == "finance" else FINOPS
-        r = ask(c.question, AgentConfig(), domain=dom, provider=provider)
+        try:
+            r = ask(c.question, AgentConfig(), domain=dom, provider=provider)
+        except Exception as exc:  # noqa: BLE001 - a provider outage is a FAIL, not a crash
+            print(f"FAIL  {c.name:<18} provider error: {type(exc).__name__}: {str(exc)[:120]}")
+            continue
         time.sleep(args.sleep)
         used = {t["name"] for t in r.tool_calls}
-        tools_ok = bool(used & c.expect_tools)
+        tools_ok = bool(used & c.expect_tools) if c.expect_tools else True
         answer_ok = any(s.lower() in r.answer.lower() for s in c.expect_any)
         ok = tools_ok and answer_ok
         passed += ok

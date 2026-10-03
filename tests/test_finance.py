@@ -102,3 +102,12 @@ def test_finance_tools_are_strict():
     for t in f.TOOLS:
         assert t["strict"] and t["input_schema"]["additionalProperties"] is False
         assert t["name"] in f.DISPATCH
+
+
+def test_overlapping_services_are_detected_deterministically(ld):
+    overlaps = f.find_subscriptions(ld)["overlapping_services"]
+    storage = next(o for o in overlaps if o["group"] == "cloud storage")
+    assert set(storage["merchants"]) == {"icloud storage", "google one"}
+    assert storage["combined_monthly_cost"] == 24.8
+    assert storage["cheapest_to_cancel_saves_monthly"] == 9.9
+    assert not any(o["group"] == "video streaming" for o in overlaps)  # only Netflix

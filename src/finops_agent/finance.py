@@ -294,6 +294,30 @@ def category_trend(ledger: Ledger, category: str) -> dict[str, Any]:
     }
 
 
+OVERLAP_GROUPS: dict[str, tuple[str, ...]] = {
+    "cloud storage": ("icloud", "google one", "dropbox", "onedrive"),
+    "video streaming": ("netflix", "disney", "hbo", "prime video", "max", "paramount", "globoplay"),
+    "music streaming": ("spotify", "apple music", "deezer", "youtube music", "tidal"),
+    "gym / fitness": ("smartfit", "academia", "gym", "bluefit", "wellhub"),
+}
+
+
+def _overlaps(subs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    for group, words in OVERLAP_GROUPS.items():
+        hits = [s for s in subs if any(w in s["merchant"] for w in words)]
+        if len(hits) >= 2:
+            out.append(
+                {
+                    "group": group,
+                    "merchants": [h["merchant"] for h in hits],
+                    "combined_monthly_cost": round(sum(h["monthly_cost"] for h in hits), 2),
+                    "cheapest_to_cancel_saves_monthly": min(h["monthly_cost"] for h in hits),
+                }
+            )
+    return out
+
+
 def find_subscriptions(ledger: Ledger) -> dict[str, Any]:
     """Merchants charged in 3+ distinct months with a near-constant amount."""
     by: dict[str, list[Transaction]] = defaultdict(list)
@@ -321,6 +345,7 @@ def find_subscriptions(ledger: Ledger) -> dict[str, Any]:
     return {
         "currency": ledger.currency,
         "subscriptions": subs,
+        "overlapping_services": _overlaps(subs),
         "total_monthly": round(sum(s["monthly_cost"] for s in subs), 2),
         "total_annual": round(sum(s["annual_cost"] for s in subs), 2),
     }
@@ -422,7 +447,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "find_subscriptions",
-        "description": "Recurring monthly charges with monthly and annual cost, including overlapping services.",
+        "description": "Recurring monthly charges with monthly and annual cost, plus overlapping_services (several services of the same kind, e.g. two cloud-storage plans).",
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         "strict": True,
     },
