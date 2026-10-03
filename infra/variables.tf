@@ -1,0 +1,44 @@
+variable "region" {
+  type    = string
+  default = "us-east-1"
+}
+
+variable "name" {
+  type    = string
+  default = "finops-agent"
+}
+
+variable "anthropic_api_key" {
+  type        = string
+  sensitive   = true
+  description = "Stored as an SSM SecureString; read by the Lambda at cold start."
+}
+
+variable "model" {
+  type        = string
+  default     = "claude-opus-5-5"
+  description = "Any Claude model id; claude-haiku-4-5 is the cheapest for a public demo."
+}
+
+variable "daily_budget_usd" {
+  type        = number
+  default     = 3
+  description = "Hard daily cap on Claude spend enforced by the API itself."
+}
+
+variable "aws_budget_usd" {
+  type        = number
+  default     = 5
+  description = "Monthly AWS budget; an alert is emailed at 80% and 100%."
+}
+
+variable "alert_email" {
+  type        = string
+  description = "Where AWS Budgets sends alerts."
+}
+
+variable "max_concurrency" {
+  type        = number
+  default     = 2
+  description = "Reserved concurrency: caps parallel executions (and therefore cost)."
+}

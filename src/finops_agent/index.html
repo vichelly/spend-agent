@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spend Agent</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1c1b18; --muted: #6b6860; --line: #e4e1d8;
+    --accent: #0f6e56; --accent-ink: #ffffff; --chip: #eef3ef; --warn: #9a3412; --code: #f0eee7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151512; --card: #1e1e1a; --ink: #ecebe5; --muted: #a09d92; --line: #33322c;
+      --accent: #3fb68f; --accent-ink: #0b1f18; --chip: #26302b; --warn: #fb923c; --code: #26251f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 28px 16px 64px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 22px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 14px; }
+  .tabs button { border: 0; background: transparent; color: var(--muted); padding: 8px 14px; font: inherit; cursor: pointer; }
+  .tabs button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  textarea { width: 100%; min-height: 84px; resize: vertical; padding: 12px; border-radius: 10px;
+             border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; }
+  textarea:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+  .chip { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 999px;
+          padding: 5px 11px; font-size: .88rem; cursor: pointer; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .file { color: var(--muted); font-size: .9rem; }
+  .privacy { color: var(--muted); font-size: .82rem; margin-top: 10px; }
+  .go { margin-left: auto; background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 10px;
+        padding: 10px 20px; font: inherit; font-weight: 600; cursor: pointer; }
+  .go[disabled] { opacity: .55; cursor: progress; }
+  #out { margin-top: 18px; display: none; }
+  #answer { white-space: normal; }
+  #answer p { margin: 0 0 10px; } #answer ul, #answer ol { margin: 0 0 10px; padding-left: 22px; }
+  #answer code { background: var(--code); padding: 1px 5px; border-radius: 5px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+          color: var(--muted); font-size: .82rem; }
+  .meta span { background: var(--chip); border-radius: 6px; padding: 2px 8px; }
+  .err { color: var(--warn); }
+  footer { color: var(--muted); font-size: .82rem; margin-top: 22px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Spend Agent</h1>
+  <p class="sub">Ask questions about an AWS bill or a personal bank statement. Every number comes from tested code;
+     the AI only explains it.</p>
+
+  <section class="card">
+    <div class="tabs" role="group" aria-label="Mode">
+      <button id="m-finops" aria-pressed="true">AWS bill</button>
+      <button id="m-finance" aria-pressed="false">Personal finance</button>
+    </div>
+
+    <label for="q" class="sub" style="display:block;margin:0 0 6px">Your question</label>
+    <textarea id="q" maxlength="500" placeholder="e.g. Did anything weird happen to my bill?"></textarea>
+    <div class="chips" id="chips"></div>
+
+    <div class="row">
+      <label class="file">Use your own data (CSV)
+        <input id="csv" type="file" accept=".csv,text/csv">
+      </label>
+      <button class="go" id="go">Ask</button>
+    </div>
+    <p class="privacy" id="privacy">Without a file, the demo uses synthetic data. Your file is read in your browser,
+       sent only for this question, and never stored.</p>
+
+    <div id="out" role="status" aria-live="polite">
+      <div id="answer"></div>
+      <div class="meta" id="meta"></div>
+    </div>
+  </section>
+
+  <footer>Savings are estimates, not financial advice. Source and architecture are in the repo README.</footer>
+</main>
+
+<script>
+const EXAMPLES = {
+  finops: [
+    "Did anything weird happen to our bill recently?",
+    "Which service costs the most this month?",
+    "How much could we save per month by cleaning up waste?",
+    "Is our NAT Gateway cost going up?"
+  ],
+  finance: [
+    "Which subscriptions am I paying for, and which overlap?",
+    "Where does my money go each month?",
+    "Is my food delivery spending growing?",
+    "Any duplicate or unusual charges?"
+  ]
+};
+const HINT = {
+  finops: "AWS Cost Explorer export (Date, Service, Cost), or the wide format with one column per date.",
+  finance: "Bank statement CSV with Date, Description and Amount (negative = expense). Brazilian format works."
+};
+let mode = "finops", csvText = null;
+const $ = (id) => document.getElementById(id);
+
+function esc(s) { return s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function inline(s) { return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code>$1</code>"); }
+function render(md) {                                   // tiny, safe markdown: paragraphs, lists, bold, code
+  const out = []; let list = null;
+  const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const raw of md.split("\n")) {
+    const line = raw.trimEnd(); let m;
+    if ((m = line.match(/^\s*[-*]\s+(.*)/))) { if (list !== "ul") { close(); out.push("<ul>"); list = "ul"; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { if (list !== "ol") { close(); out.push("<ol>"); list = "ol"; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if (!line.trim()) { close(); }
+    else { close(); out.push(`<p>${inline(line.replace(/^#+\s*/, ""))}</p>`); }
+  }
+  close(); return out.join("");
+}
+
+function setMode(next) {
+  mode = next; csvText = null; $("csv").value = "";
+  $("m-finops").setAttribute("aria-pressed", next === "finops");
+  $("m-finance").setAttribute("aria-pressed", next === "finance");
+  $("chips").innerHTML = "";
+  for (const ex of EXAMPLES[next]) {
+    const b = document.createElement("button"); b.className = "chip"; b.textContent = ex;
+    b.onclick = () => { $("q").value = ex; $("q").focus(); };
+    $("chips").appendChild(b);
+  }
+  $("privacy").textContent = "Without a file, the demo uses synthetic data. " + HINT[next] +
+    " Your file is read in your browser, sent only for this question, and never stored.";
+}
+$("m-finops").onclick = () => setMode("finops");
+$("m-finance").onclick = () => setMode("finance");
+$("csv").onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) { csvText = null; return; }
+  if (f.size > 900_000) { alert("File too large (max ~900 KB)."); e.target.value = ""; return; }
+  csvText = await f.text();
+};
+
+$("go").onclick = async () => {
+  const q = $("q").value.trim();
+  if (q.length < 3) { $("q").focus(); return; }
+  const btn = $("go"); btn.disabled = true; btn.textContent = "Thinking…";
+  $("out").style.display = "block"; $("answer").innerHTML = "<p class='sub'>Running the analysis…</p>"; $("meta").innerHTML = "";
+  try {
+    const r = await fetch("ask", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question: q, mode, csv_text: csvText }) });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : `Request failed (${r.status})`);
+    $("answer").innerHTML = render(body.answer);
+    $("meta").innerHTML = [
+      `${body.steps} step${body.steps === 1 ? "" : "s"}`,
+      body.tools_used.length ? "tools: " + [...new Set(body.tools_used)].join(", ") : "no tools",
+      `${body.input_tokens + body.output_tokens} tokens`,
+      `$${body.cost_usd.toFixed(4)}`
+    ].map(t => `<span>${esc(t)}</span>`).join("");
+  } catch (e) {
+    $("answer").innerHTML = `<p class="err">${esc(e.message)}</p>`;
+  } finally { btn.disabled = false; btn.textContent = "Ask"; }
+};
+$("q").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("go").click(); });
+setMode("finops");
+</script>
+</body>
+</html>
