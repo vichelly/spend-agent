@@ -104,6 +104,22 @@ python evals/run_evals.py                # --sleep 4 if you hit free-tier rate l
 Model ids change over time; override with `FINOPS_MODEL`. Free tiers may log or train on prompts, so use
 the synthetic demo data (the agent already sends only compact tool results, never your raw statement).
 
+## Eval results (live, free tier, $0)
+
+`python evals/run_evals.py` runs 11 questions against a real model. Latest run on **gemini-2.5-flash**
+(free tier, so about 20 requests per day; cases were run in batches):
+
+| Cases | Result |
+|---|---|
+| 9 of 11 (total, top service, NAT trend, anomaly, both savings questions, "no data" honesty, overlapping subscriptions, delivery trend) | **PASS** |
+| `fin_subs_total`, `fin_duplicate` | not re-run on this model after the last fixes (quota); both passed on `gemini-2.5-flash-lite` |
+
+What the evals caught and fixed: a small model returning an empty answer after a tool call (the agent now
+re-asks once); a model claiming "no redundant subscriptions" when two cloud-storage plans overlapped
+(overlap detection moved into deterministic code, with tests); an eval rule that wrongly demanded a tool call
+for an unanswerable question. Gemini 3.x models are not supported through the OpenAI-compatible endpoint
+(they require `thought_signature` round-tripping).
+
 ## Model and cost notes
 - Per-request guards: `FINOPS_MAX_COST_PER_REQUEST` (USD), `FINOPS_MAX_TOKENS_PER_REQUEST` (also protects free-tier limits).
 - With Claude, `FINOPS_EFFORT` is sent only to models that support it.
